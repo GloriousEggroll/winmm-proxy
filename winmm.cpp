@@ -440,6 +440,7 @@ DWORD WINAPI Load(LPVOID lpParam) {
 	auto procFilename = procPath.filename().string();
 
 	logger::info("Executable name: '" + procFilename + "'.");
+	logger::info("Executable full path: '" + procFullPathString + "'.");
 
 	if (ToLower(procFilename).compare("dragonageinquisition.exe") == 0)
 	{
