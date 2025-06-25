@@ -5,6 +5,7 @@
 #include "winmm.h"
 #include <mmsystem.h>
 #include <filesystem>
+#include <shellapi.h>
 
 HMODULE winmm_dll;
 
@@ -211,13 +212,36 @@ WRAPPER_GENFUNC(waveOutSetVolume);
 WRAPPER_GENFUNC(waveOutUnprepareHeader);
 WRAPPER_GENFUNC(waveOutWrite);
 
-void load_winmm() {
+static bool load_winmm() {
 	char systemPath[MAX_PATH];
-	GetSystemDirectoryA(systemPath, MAX_PATH);
+
+	if (!GetSystemDirectoryA(systemPath, MAX_PATH)) {
+		logger::info("Could not access System32 path.");
+	}
+
 	strcat_s(systemPath, "\\winmm.dll");
+
 	winmm_dll = LoadLibraryA(systemPath);
 
-	if (!winmm_dll) return;
+	if (!winmm_dll) {
+		logger::info("Could not load org 'winmm.dll' from '" + std::string(systemPath) + "'");
+
+		char systemPathWow64[MAX_PATH];
+
+		if (!GetSystemWow64DirectoryA(systemPathWow64, MAX_PATH)) {
+			logger::info("Could not access SysWOW64 path.");
+		}
+
+		strcat_s(systemPathWow64, "\\winmm.dll");
+
+		winmm_dll = LoadLibraryA(systemPathWow64);
+
+		if (!winmm_dll) {
+			logger::info("Could not load org 'winmm.dll' from '" + std::string(systemPathWow64) + "'");
+
+			return false;
+		}
+	}
 
 	WRAPPER_FUNC(CloseDriver);
 	WRAPPER_FUNC(DefDriverProc);
@@ -399,6 +423,8 @@ void load_winmm() {
 	WRAPPER_FUNC(waveOutSetVolume);
 	WRAPPER_FUNC(waveOutUnprepareHeader);
 	WRAPPER_FUNC(waveOutWrite);
+
+	return true;
 }
 
 std::string static ToLower(std::string data)
@@ -412,13 +438,12 @@ std::string static ToLower(std::string data)
 }
 
 DWORD WINAPI Load(LPVOID lpParam) {
-	load_winmm();
-	if (!winmm_dll)
+	logger::init();
+
+	if (!load_winmm())
 	{
 		return 0;
 	}
-
-	logger::init();
 
 	auto path = std::filesystem::current_path();
 	path.append("crypthook.dll");
@@ -441,6 +466,27 @@ DWORD WINAPI Load(LPVOID lpParam) {
 
 	logger::info("Executable name: '" + procFilename + "'.");
 	logger::info("Executable full path: '" + procFullPathString + "'.");
+
+	LPWSTR* szArglist;
+	int nArgs;
+	int i;
+
+	szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
+	if (NULL != szArglist)
+	{
+		std::string args;
+		for (i = 0; i < nArgs; i++)
+		{
+			std::wstring ws(szArglist[i]);
+			auto myVarS = std::string(ws.begin(), ws.end());
+
+			args += "\"" + myVarS + "\"";
+			args += " ";
+		}
+
+		logger::info("Arguments: " + args);
+	}
+	
 
 	if (ToLower(procFilename).compare("dragonageinquisition.exe") == 0)
 	{
