@@ -3,6 +3,7 @@
 #include "dai_workaround.h"
 #include "me_workaround.h"
 #include "winmm.h"
+#include <cctype>
 #include <mmsystem.h>
 #include <filesystem>
 #include <shellapi.h>

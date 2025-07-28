@@ -4,12 +4,16 @@ namespace daiworkaround
 {
 	typedef BOOL(WINAPI* NtUserAttachThreadInput)(DWORD, DWORD, BOOL);
 
-	typedef HWND(WINAPI* GetFocus)(void);
+	typedef BOOL(WINAPI* NtUserGetGUIThreadInfo)(DWORD, GUITHREADINFO*);
 
+	typedef HWND(WINAPI* GetFocus)(void);
+	
 	NtUserAttachThreadInput fpNtUserAttachThreadInput = NULL;
 
-	GetFocus fpGetFocus = NULL;
+	NtUserGetGUIThreadInfo fpNtUserGetGUIThreadInfo = NULL;
 
+	GetFocus fpGetFocus = NULL;
+	
 	BOOL DetourNtUserAttachThreadInput(DWORD from, DWORD to, BOOL attach)
 	{
 		static int visited = 0;
@@ -30,6 +34,25 @@ namespace daiworkaround
 		}
 
 		return fpNtUserAttachThreadInput(from, to, attach);
+	}
+
+	BOOL DetourNtUserGetGUIThreadInfo(DWORD id, GUITHREADINFO* info)
+	{
+		static HWND prev = 0;
+
+		BOOL res = fpNtUserGetGUIThreadInfo(id, info);
+		HWND focus = res ? info->hwndFocus : 0;
+
+		if (focus == 0 && prev != 0)
+		{
+			DetourNtUserAttachThreadInput(0, 0, 1);
+		}
+		else
+		{
+			prev = focus;
+		}
+
+		return res;
 	}
 
 	HWND DetourGetFocus(void)
@@ -91,6 +114,14 @@ namespace daiworkaround
 
 		logger::info("Hooked NtUserAttachThreadInput.");
 
+		if (MH_CreateHookApiEx(L"win32u", "NtUserGetGUIThreadInfo", &DetourNtUserGetGUIThreadInfo, &fpNtUserGetGUIThreadInfo) != MH_OK)
+		{
+			logger::info("Could not hook NtUserGetGUIThreadInfo.");
+			return;
+		}
+
+		logger::info("Hooked NtUserGetGUIThreadInfo.");
+
 		if (MH_CreateHookApiEx(L"user32", "GetFocus", &DetourGetFocus, &fpGetFocus) != MH_OK)
 		{
 			logger::info("Could not hook GetFocus.");
@@ -98,7 +129,7 @@ namespace daiworkaround
 		}
 
 		logger::info("Hooked GetFocus.");
-
+		
 		if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
 		{
 			logger::info("Could not enable hooks.");
