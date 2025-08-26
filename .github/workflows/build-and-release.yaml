@@ -1,0 +1,98 @@
+name: Build and Release (x64 only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag (e.g. v0.1.0) for the release"
+        required: true
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Get vcpkg (no manifest)
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
+          & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
+
+      - name: Install MinHook (x64 static MD)
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = "$env:USERPROFILE\vcpkg"
+          & $env:VCPKG_ROOT\vcpkg.exe install minhook:x64-windows-static-md
+          & $env:VCPKG_ROOT\vcpkg.exe integrate install
+
+      - name: Detect latest installed Windows 10 SDK
+        id: winsdk
+        shell: pwsh
+        run: |
+          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\Include"
+          $versions = Get-ChildItem $sdkRoot -Directory `
+            | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } `
+            | Sort-Object { [version]$_.Name } -Descending
+          if (-not $versions) { throw "No Windows 10 SDK found under $sdkRoot" }
+          $ver = $versions[0].Name
+          "Windows SDK selected: $ver"
+          echo "SDK_VER=$ver" >> $env:GITHUB_ENV
+
+      - name: Build (Release x64, override SDK)
+        shell: pwsh
+        run: |
+          msbuild .\winmm-proxy.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:WindowsTargetPlatformVersion=${env:SDK_VER} `
+            /p:PlatformToolset=v143 `
+            /m
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Get-ChildItem -Path . -Include *.dll,*.lib,*.pdb -Recurse `
+            | Where-Object { $_.FullName -match "\\x64\\Release\\" } `
+            | Copy-Item -Destination artifacts -Force
+          Get-ChildItem artifacts | ForEach-Object {
+            $new = $_.Name -replace '\.(dll|lib|pdb)$', ".x64.`$1"
+            Rename-Item $_.FullName $new
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: winmm-proxy-x64
+          path: artifacts/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            Automated x64 build of winmm-proxy.
+            - Built from commit: ${{ github.sha }}
+            - Artifacts: DLLs (and any LIB/PDB) for x64.
+          files: |
+            dist/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
